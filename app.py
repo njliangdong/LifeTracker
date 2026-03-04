@@ -86,8 +86,10 @@ st.title("🍎 每日信息汇总管理")
 tab1, tab2 = st.tabs(["✍️ 详细登记", "📊 历史管理"])
 
 with tab1:
-    with st.form("comprehensive_form", clear_on_submit=True):
-        st.subheader("1. 基础睡眠与生理指标")
+    # 使用 Form 无法直接清除内部组件状态，因此图片组件放在 Form 外部
+    # 或者利用 Session State 并在提交后清空。
+    st.subheader("1. 基础睡眠与生理指标")
+    with st.form("basic_info_form"):
         c1, c2, c3 = st.columns(3)
         with c1:
             record_date = st.date_input("记录日期", value=datetime.now())
@@ -125,51 +127,79 @@ with tab1:
         with c7:
             discomfort = st.text_area("不适/特殊情况", value="无")
             review = st.text_area("一天回顾")
+        
+        # 提交按钮放在这里
+        submit_form = st.form_submit_button("✅ 填写完毕，去上传照片")
 
-        st.info("📸 饮食照片：系统优先采用新拍的照片，其次为上传的文件。")
-        ci1, ci2 = st.columns(2)
-        with ci1:
-            st.write("**早餐**")
-            img_b = st.camera_input("拍照", key="cam_b") or st.file_uploader("上传", key="up_b")
-            st.write("**午餐**")
-            img_l = st.camera_input("拍照", key="cam_l") or st.file_uploader("上传", key="up_l")
-        with ci2:
-            st.write("**加餐**")
-            img_s = st.camera_input("拍照", key="cam_s") or st.file_uploader("上传", key="up_s")
-            st.write("**晚餐**")
-            img_d = st.camera_input("拍照", key="cam_d") or st.file_uploader("上传", key="up_d")
+    st.divider()
+    st.subheader("4. 📸 饮食拍照与上传")
+    st.info("提示：拍照或上传后，若不满意可点击下方的“❌ 清除重选”。最终确认提交后才会保存。")
+    
+    ci1, ci2 = st.columns(2)
+    
+    # 定义图片处理组件函数
+    def image_slot(label, key_prefix):
+        st.write(f"**{label}**")
+        cam_key = f"{key_prefix}_cam"
+        up_key = f"{key_prefix}_up"
+        
+        cam_img = st.camera_input(f"拍{label}", key=cam_key)
+        up_img = st.file_uploader(f"从相册选{label}", type=['jpg','png','jpeg'], key=up_key)
+        
+        final_img = cam_img if cam_img else up_img
+        
+        if final_img:
+            if st.button(f"❌ 清除当前{label}照片", key=f"clear_{key_prefix}"):
+                # 通过改变 key 强制让组件重置（Streamlit 技巧：Key 变了，组件状态就清空）
+                # 这里我们简单 rerun 即可，因为 file_uploader 是非持久的
+                st.toast(f"已清除{label}，请重新操作")
+                st.rerun()
+        return final_img
 
-        if st.form_submit_button("✅ 确认提交并同步"):
-            dt_str = str(record_date)
-            new_data = {
-                "日期": dt_str, "昨日入睡": s_in, "今早起床": s_out, "睡眠时长": s_dur,
-                "是否起夜": s_night, "排便性状": bowel, "体重": weight, "用药按时": meds,
-                "抽烟": smoke, "饮水": water, "其中饮料": water_extra,
-                "早餐": breakfast_t, "午餐": lunch_t, "午后步行": walk_l,
-                "加餐": snack_t, "晚餐": dinner_t, "晚后步行": walk_d,
-                "精力": energy, "情绪": mood, "不适": discomfort, "回顾": review,
-                "早餐图": process_and_save(img_b, "breakfast", dt_str),
-                "午餐图": process_and_save(img_l, "lunch", dt_str),
-                "加餐图": process_and_save(img_s, "snack", dt_str),
-                "晚餐图": process_and_save(img_d, "dinner", dt_str)
-            }
-            df = st.session_state.data
-            if not df.empty and dt_str in df['日期'].values:
-                idx = df[df['日期'] == dt_str].index[0]
-                for k, v in new_data.items():
-                    if "图" in k:
-                        if v is not None: df.at[idx, k] = v
-                    else:
-                        df.at[idx, k] = v
-            else:
-                for k in ["早餐图", "午餐图", "加餐图", "晚餐图"]:
-                    if new_data[k] is None: new_data[k] = "na"
-                df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+    with ci1:
+        img_b = image_slot("早餐", "b")
+        img_l = image_slot("午餐", "l")
+    with ci2:
+        img_s = image_slot("加餐", "s")
+        img_d = image_slot("晚餐", "d")
 
-            df.to_csv(DATA_FILE, index=False)
-            st.session_state.data = df
-            st.success("数据已成功保存！")
-            st.rerun()
+    st.divider()
+    # 最终提交按钮
+    if st.button("🚀 确认全部数据并最终提交保存", type="primary", use_container_width=True):
+        if not submit_form:
+            st.warning("请确保先点击上方表单内的『填写完毕』确认文字信息")
+        
+        dt_str = str(record_date)
+        new_data = {
+            "日期": dt_str, "昨日入睡": s_in, "今早起床": s_out, "睡眠时长": s_dur,
+            "是否起夜": s_night, "排便性状": bowel, "体重": weight, "用药按时": meds,
+            "抽烟": smoke, "饮水": water, "其中饮料": water_extra,
+            "早餐": breakfast_t, "午餐": lunch_t, "午后步行": walk_l,
+            "加餐": snack_t, "晚餐": dinner_t, "晚后步行": walk_d,
+            "精力": energy, "情绪": mood, "不适": discomfort, "回顾": review,
+            "早餐图": process_and_save(img_b, "breakfast", dt_str),
+            "午餐图": process_and_save(img_l, "lunch", dt_str),
+            "加餐图": process_and_save(img_s, "snack", dt_str),
+            "晚餐图": process_and_save(img_d, "dinner", dt_str)
+        }
+        
+        df = st.session_state.data
+        if not df.empty and dt_str in df['日期'].values:
+            idx = df[df['日期'] == dt_str].index[0]
+            for k, v in new_data.items():
+                if "图" in k:
+                    if v is not None: df.at[idx, k] = v
+                else:
+                    df.at[idx, k] = v
+        else:
+            for k in ["早餐图", "午餐图", "加餐图", "晚餐图"]:
+                if new_data[k] is None: new_data[k] = "na"
+            df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+
+        df.to_csv(DATA_FILE, index=False)
+        st.session_state.data = df
+        st.success("🎉 数据已成功保存同步！")
+        st.rerun()
 
 with tab2:
     st.subheader("📜 历史数据全量管理")
@@ -178,7 +208,6 @@ with tab2:
     if not df_view.empty:
         df_view = df_view.sort_values("日期", ascending=False)
         
-        # --- 导出功能区 ---
         st.write("### 📥 批量导出")
         selected_dates = st.multiselect("请勾选需要导出的日期：", options=df_view['日期'].tolist())
         if selected_dates:
@@ -192,14 +221,11 @@ with tab2:
             )
         st.divider()
 
-        # --- 全量内容展示区 ---
         for index, row in df_view.iterrows():
             with st.expander(f"📅 {row['日期']} | 体重: {row['体重']}kg"):
-                # 仅保留删除按钮
                 if st.button("🗑️ 删除此条全部记录", key=f"del_{row['日期']}_{index}", type="primary"):
                     delete_record(row['日期'])
                 
-                # 指标平铺展示
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.markdown(f"**😴 睡眠**: {row['昨日入睡']} - {row['今早起床']} ({row['睡眠时长']}h)")
@@ -213,7 +239,6 @@ with tab2:
                 st.markdown(f"**📝 今日回顾**: {row['回顾']}")
                 
                 st.divider()
-                # 饮食与图片
                 st.write("**🍱 饮食图文详情**")
                 img_c1, img_c2, img_c3, img_c4 = st.columns(4)
                 meal_data = [("早餐", "早餐图", img_c1), ("午餐", "午餐图", img_c2), 
