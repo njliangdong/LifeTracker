@@ -83,7 +83,6 @@ with tab1:
         st.subheader("1. 基础睡眠与生理指标" + (" (编辑模式)" if is_editing else ""))
         c1, c2, c3 = st.columns(3)
         with c1:
-            # 自动读取设备当前日期，编辑模式下不可更改日期
             record_date = st.date_input("记录日期", 
                                        value=datetime.strptime(default_vals['日期'], "%Y-%m-%d") if is_editing else datetime.now(),
                                        disabled=is_editing)
@@ -124,14 +123,30 @@ with tab1:
             discomfort = st.text_area("不适/特殊情况", value=default_vals.get('不适', "无"))
             review = st.text_area("一天回顾", value=default_vals.get('回顾', ""))
 
-        st.info("📸 饮食拍照：若不重拍将保留历史照片。")
+        st.info("📸 饮食照片：系统优先采用新拍的照片，其次为上传的文件。若均留空则保留历史。")
         ci1, ci2 = st.columns(2)
+        
         with ci1:
-            img_b = st.camera_input("早餐拍照")
-            img_l = st.camera_input("午餐拍照")
+            st.write("**早餐**")
+            cam_b = st.camera_input("拍照", key="cam_b")
+            up_b = st.file_uploader("或相册上传", type=['jpg','png','jpeg'], key="up_b")
+            img_b = cam_b if cam_b else up_b
+
+            st.write("**午餐**")
+            cam_l = st.camera_input("拍照", key="cam_l")
+            up_l = st.file_uploader("或相册上传", type=['jpg','png','jpeg'], key="up_l")
+            img_l = cam_l if cam_l else up_l
+
         with ci2:
-            img_s = st.camera_input("加餐拍照")
-            img_d = st.camera_input("晚餐拍照")
+            st.write("**加餐**")
+            cam_s = st.camera_input("拍照", key="cam_s")
+            up_s = st.file_uploader("或相册上传", type=['jpg','png','jpeg'], key="up_s")
+            img_s = cam_s if cam_s else up_s
+
+            st.write("**晚餐**")
+            cam_d = st.camera_input("拍照", key="cam_d")
+            up_d = st.file_uploader("或相册上传", type=['jpg','png','jpeg'], key="up_d")
+            img_d = cam_d if cam_d else up_d
 
         submit = st.form_submit_button("✅ 确认提交并最终同步" if not is_editing else "💾 保存修改并退出编辑")
 
@@ -152,7 +167,6 @@ with tab1:
 
             df = st.session_state.data
             if not df.empty and dt_str in df['日期'].values:
-                # 覆盖逻辑
                 idx = df[df['日期'] == dt_str].index[0]
                 for k, v in new_data.items():
                     if "图" in k:
@@ -160,28 +174,23 @@ with tab1:
                     else:
                         df.at[idx, k] = v
             else:
-                # 新增逻辑
                 for k in ["早餐图", "午餐图", "加餐图", "晚餐图"]:
                     if new_data[k] is None: new_data[k] = "na"
                 df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
 
-            # 保存并重置状态
             df.to_csv(DATA_FILE, index=False)
             st.session_state.data = df
             st.session_state.edit_mode = False
-            st.success("今日记录已安全保存！")
+            st.success("数据已成功保存同步！")
             st.rerun()
 
 with tab2:
     st.subheader("📜 历史数据管理")
     df_view = st.session_state.data
     if not df_view.empty:
-        # 按日期倒序
         df_view = df_view.sort_values("日期", ascending=False)
-        
         for index, row in df_view.iterrows():
             with st.expander(f"📅 {row['日期']} | 体重: {row['体重']}kg | 回顾: {str(row['回顾'])[:15]}..."):
-                # 按钮增加唯一 ID (index)，解决重复日期导致的报错
                 b_edit, b_del, _ = st.columns([1, 1, 8])
                 if b_edit.button("📝 修改", key=f"btn_edit_{row['日期']}_{index}"):
                     edit_record(row)
@@ -189,7 +198,6 @@ with tab2:
                 if b_del.button("🗑️ 删除", key=f"btn_del_{row['日期']}_{index}", type="primary"):
                     delete_record(row['日期'])
                 
-                # 内容展示
                 st.write(f"**睡眠**: {row['昨日入睡']} ~ {row['今早起床']} (持续{row['睡眠时长']}h)")
                 st.write(f"**指标**: 抽烟{row['抽烟']}根 | 饮水{row['饮水']}L | 状态:{row['精力']}/{row['情绪']}")
                 
@@ -201,9 +209,8 @@ with tab2:
                     else:
                         img_cols[i].caption(f"无{img_k}")
     else:
-        st.info("暂无记录，快去『详细登记』吧！")
+        st.info("暂无记录。")
 
-    # 导出按钮
     if not df_view.empty:
         csv = df_view.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 导出完整 CSV 数据", data=csv, file_name=f"health_backup_{datetime.now().strftime('%Y%m%d')}.csv")
