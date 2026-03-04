@@ -25,19 +25,24 @@ if datetime.now().day == 1:
 # --- 图像压缩函数 ---
 def process_and_save(img_file, slot_name, date_str):
     if img_file is None:
-        return "na"
+        return None  # 返回 None 表示本次没有新上传图片
     img = Image.open(img_file)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     file_name = f"{date_str}_{slot_name}.jpg"
     save_path = os.path.join(IMAGE_DIR, file_name)
-    img.save(save_path, "JPEG", quality=30, optimize=True) # 压缩质量30%
+    img.save(save_path, "JPEG", quality=30, optimize=True) 
     return save_path
 
 # 数据加载
 def load_data():
-    try: return pd.read_csv(DATA_FILE)
-    except: return pd.DataFrame()
+    try: 
+        df = pd.read_csv(DATA_FILE)
+        # 确保日期列是字符串方便比对
+        df['日期'] = df['日期'].astype(str)
+        return df
+    except: 
+        return pd.DataFrame()
 
 data = load_data()
 
@@ -46,7 +51,6 @@ st.title("🍎 每日信息汇总管理")
 tab1, tab2 = st.tabs(["✍️ 详细登记", "📊 数据历史"])
 
 with tab1:
-    # 使用 Form 包裹所有文字和选项
     with st.form("comprehensive_form", clear_on_submit=True):
         st.subheader("1. 基础睡眠与生理指标")
         c1, c2, c3 = st.columns(3)
@@ -98,9 +102,7 @@ with tab1:
             unfinished = st.text_area("对照方案，未完成项", value="无")
             review = st.text_area("一天回顾")
 
-        # 拍照区域放在表单内最后，或者表单外。
-        # 注意：Streamlit 官方建议 camera_input 放在 form 外以实时捕获，但为了你一键提交，我们放进 Form
-        st.info("📸 饮食拍照：点击下方按钮开启摄像头（拍完后点击提交保存所有数据）")
+        st.info("📸 饮食拍照：若不更新照片请留空，系统将保留原照片。")
         col_img1, col_img2 = st.columns(2)
         with col_img1:
             img_b = st.camera_input("早餐照片")
@@ -109,11 +111,13 @@ with tab1:
             img_s = st.camera_input("加餐照片")
             img_d = st.camera_input("晚餐照片")
 
-        submit = st.form_submit_button("✅ 提交今日全部信息并同步")
+        submit = st.form_submit_button("✅ 提交并更新今日记录")
         
         if submit:
             dt_str = str(date)
-            new_record = {
+            
+            # 准备新输入的数据
+            new_data_point = {
                 "日期": dt_str, "昨日入睡": s_in, "今早起床": s_out, "睡眠时长": s_dur,
                 "是否起夜": s_night, "排便性状": bowel, "体重": weight, "用药按时": meds,
                 "抽烟": smoke, "饮水": water, "其中饮料": water_extra,
@@ -122,33 +126,61 @@ with tab1:
                 "有氧": cardio, "抗阻": strength, "呼吸练习": breath,
                 "精力": energy, "情绪": mood, "饥饿点": hunger,
                 "不适": discomfort, "未完成": unfinished, "回顾": review,
-                # 处理图片路径
                 "早餐图": process_and_save(img_b, "breakfast", dt_str),
                 "午餐图": process_and_save(img_l, "lunch", dt_str),
                 "加餐图": process_and_save(img_s, "snack", dt_str),
                 "晚餐图": process_and_save(img_d, "dinner", dt_str)
             }
-            updated_df = pd.concat([data, pd.DataFrame([new_record])], ignore_index=True)
-            updated_df.to_csv(DATA_FILE, index=False)
-            st.success("数据与照片已全部安全保存！")
+
+            if not data.empty and dt_str in data['日期'].values:
+                # --- 覆盖逻辑：如果日期已存在 ---
+                # 获取该行索引
+                idx = data[data['日期'] == dt_str].index[0]
+                
+                for key, value in new_data_point.items():
+                    # 如果是图片，只有在新拍了照片（value 不是 None）时才覆盖
+                    if "图" in key:
+                        if value is not None:
+                            data.at[idx, key] = value
+                    else:
+                        # 对于文字和数字，直接以最后一次提交为准
+                        data.at[idx, key] = value
+                
+                st.info(f"检测到 {dt_str} 已有记录，已完成覆盖更新。")
+            else:
+                # --- 新增逻辑：如果日期不存在 ---
+                # 处理图片路径中的 None，转为 "na"
+                for key in ["早餐图", "午餐图", "加餐图", "晚餐图"]:
+                    if new_data_point[key] is None:
+                        new_data_point[key] = "na"
+                
+                new_row = pd.DataFrame([new_data_point])
+                data = pd.concat([data, new_row], ignore_index=True)
+                st.success(f"已创建 {dt_str} 的新纪录！")
+
+            # 保存到本地文件
+            data.to_csv(DATA_FILE, index=False)
+            st.rerun()
 
 with tab2:
     st.subheader("历史记录回顾")
     if not data.empty:
-        # 显示简表
-        st.dataframe(data.sort_values("日期", ascending=False))
+        # 排序显示
+        display_df = data.sort_values("日期", ascending=False)
+        st.dataframe(display_df, use_container_width=True)
         
-        # 详细卡片浏览（含照片）
-        for _, row in data.sort_values("日期", ascending=False).iterrows():
+        for _, row in display_df.iterrows():
             with st.expander(f"📅 {row['日期']} 详细记录回顾"):
-                # 图片展示逻辑
                 pic_cols = st.columns(4)
-                for i, slot in enumerate(["早餐图", "午餐图", "加餐图", "晚餐图"]):
+                img_keys = ["早餐图", "午餐图", "加餐图", "晚餐图"]
+                for i, slot in enumerate(img_keys):
                     with pic_cols[i]:
                         path = str(row[slot])
-                        if path != "na" and os.path.exists(path):
+                        if path != "na" and path != "None" and os.path.exists(path):
                             st.image(path, caption=slot)
-                st.write(f"**回顾**: {row['回顾']}")
+                        else:
+                            st.caption(f"无{slot}")
+                st.write(f"**总回顾**: {row['回顾']}")
                 
         csv = data.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 导出完整 CSV 结果", data=csv, file_name="健康生活管理导出.csv")
