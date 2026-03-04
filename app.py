@@ -3,12 +3,10 @@ import pandas as pd
 from datetime import datetime
 import os
 from PIL import Image
-import io
-from docx import Document
-from docx.shared import Inches
+import base64  # 新增：用于将图片编码进 HTML
 
 # 页面配置
-st.set_page_config(page_title="生活看板Pro", layout="wide")
+st.set_page_config(page_title="生活看板Pro", layout="wide", page_icon="🍎")
 
 # 文件夹准备
 IMAGE_DIR = "health_images"
@@ -39,62 +37,119 @@ def process_and_save(img_file, slot_name, date_str):
         img = Image.open(img_file)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
+        # 压缩图片以减小 HTML 体积
+        img.thumbnail((800, 800)) 
         file_name = f"{date_str}_{slot_name}.jpg"
         save_path = os.path.join(IMAGE_DIR, file_name)
-        img.save(save_path, "JPEG", quality=40, optimize=True) 
+        img.save(save_path, "JPEG", quality=50, optimize=True) 
         return save_path
     except Exception as e:
         st.error(f"图片保存失败: {e}")
         return None
 
-# --- Word 导出逻辑 (图文并茂) ---
-def export_to_word(selected_df):
-    doc = Document()
-    doc.add_heading('生活看板 - 历史健康报告', 0)
-    
-    for _, row in selected_df.iterrows():
-        doc.add_heading(f"日期: {row['日期']}", level=1)
-        
-        # 基础指标表格
-        table = doc.add_table(rows=1, cols=3)
-        hdr_cells = table.rows[0].cells
-        hdr_cells[0].text = f"体重: {row['体重']}kg"
-        hdr_cells[1].text = f"抽烟: {row['抽烟']}根"
-        hdr_cells[2].text = f"用药: {row['用药按时']}"
-        
-        doc.add_paragraph(f"😴 睡眠: {row['昨日入睡']} ~ {row['今早起床']} (时长: {row['睡眠时长']}h)")
-        doc.add_paragraph(f"🚽 生理: 起夜: {row['是否起夜']} | 排便性状: {row['排便性状']}")
-        doc.add_paragraph(f"🔋 状态: 精力: {row['精力']} | 情绪: {row['情绪']}")
-        doc.add_paragraph(f"🚶 运动: 午后步: {row['午后步行']}min | 晚后步: {row['晚后步行']}min")
-        
-        # 饮食明细
-        doc.add_heading('🍲 饮食记录', level=2)
-        p = doc.add_paragraph()
-        p.add_run(f"早餐: {row['早餐']}\n").bold = True
-        p.add_run(f"午餐: {row['午餐']}\n").bold = True
-        p.add_run(f"加餐: {row['加餐']}\n").bold = True
-        p.add_run(f"晚餐: {row['晚餐']}").bold = True
-        
-        # 插入图片
-        doc.add_heading('📸 饮食照片', level=2)
-        for label, img_key in [("早餐", "早餐图"), ("午餐", "午餐图"), ("加餐", "加餐图"), ("晚餐", "晚餐图")]:
-            img_path = str(row[img_key])
-            if img_path != "na" and os.path.exists(img_path):
-                doc.add_paragraph(f"[{label}图片]")
-                doc.add_picture(img_path, width=Inches(3.0))
-        
-        doc.add_paragraph(f"📝 今日回顾: {row['回顾']}")
-        doc.add_page_break()
+# --- 新增：HTML 导出逻辑 (替代 Word) ---
+def get_image_base64(path):
+    """将本地图片转换为 Base64 字符串，以便嵌入 HTML"""
+    if pd.isna(path) or str(path) == "na" or not os.path.exists(str(path)):
+        return None
+    try:
+        with open(path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode()
+        return f"data:image/jpeg;base64,{encoded_string}"
+    except:
+        return None
 
-    bio = io.BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
+def export_to_html(selected_df):
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>健康生活报告</title>
+        <style>
+            body { font-family: 'Helvetica', 'Microsoft YaHei', sans-serif; background-color: #f4f4f9; color: #333; padding: 20px; }
+            .card { background: white; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 30px; padding: 20px; border-left: 5px solid #ff4b4b; }
+            h1 { text-align: center; color: #ff4b4b; }
+            h2 { border-bottom: 1px solid #eee; padding-bottom: 10px; color: #555; }
+            .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px; }
+            .meta-item { background: #f9f9f9; padding: 10px; border-radius: 5px; font-size: 0.9em; }
+            .food-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 15px; }
+            .food-item { text-align: center; background: #fff; border: 1px solid #eee; padding: 5px; border-radius: 5px; }
+            .food-item img { width: 100%; height: 150px; object-fit: cover; border-radius: 3px; }
+            .food-text { margin-top: 5px; font-size: 0.85em; font-weight: bold; color: #444; }
+            .review-box { background: #fffbe6; padding: 15px; border-radius: 5px; margin-top: 15px; border: 1px solid #ffe58f; }
+            /* 打印优化 */
+            @media print { body { background: white; } .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; } }
+            @media (max-width: 768px) { .food-grid { grid-template-columns: repeat(2, 1fr); } }
+        </style>
+    </head>
+    <body>
+        <h1>🍎 个人健康历史报告</h1>
+    """
+
+    for _, row in selected_df.iterrows():
+        # 准备图片数据
+        imgs = {
+            "早": get_image_base64(row['早餐图']),
+            "午": get_image_base64(row['午餐图']),
+            "加": get_image_base64(row['加餐图']),
+            "晚": get_image_base64(row['晚餐图'])
+        }
+        
+        # 构建单个日期的卡片 HTML
+        card_html = f"""
+        <div class="card">
+            <h2>📅 日期: {row['日期']}</h2>
+            
+            <div class="meta-grid">
+                <div class="meta-item">⚖️ 体重: <strong>{row['体重']} kg</strong></div>
+                <div class="meta-item">😴 睡眠: {row['昨日入睡']} ~ {row['今早起床']} ({row['睡眠时长']}h)</div>
+                <div class="meta-item">🚬 抽烟: {row['抽烟']} 根 | 💊 用药: {row['用药按时']}</div>
+                <div class="meta-item">🚽 生理: 起夜({row['是否起夜']}) | 便性({row['排便性状']})</div>
+                <div class="meta-item">💧 饮水: {row['饮水']}L ({row['其中饮料']})</div>
+                <div class="meta-item">🚶 运动: 午{row['午后步行']}min / 晚{row['晚后步行']}min</div>
+                <div class="meta-item">⚡ 状态: 精力({row['精力']}) / 情绪({row['情绪']})</div>
+            </div>
+
+            <div style="margin-top:10px;">
+                <strong>⚠️ 不适记录:</strong> {row['不适']}
+            </div>
+
+            <div class="food-grid">
+                <div class="food-item">
+                    <div class="food-text">🍳 早餐: {row['早餐']}</div>
+                    {f'<img src="{imgs["早"]}">' if imgs["早"] else '<div style="height:150px;line-height:150px;color:#ccc">无图</div>'}
+                </div>
+                <div class="food-item">
+                    <div class="food-text">🍱 午餐: {row['午餐']}</div>
+                    {f'<img src="{imgs["午"]}">' if imgs["午"] else '<div style="height:150px;line-height:150px;color:#ccc">无图</div>'}
+                </div>
+                <div class="food-item">
+                    <div class="food-text">🍪 加餐: {row['加餐']}</div>
+                    {f'<img src="{imgs["加"]}">' if imgs["加"] else '<div style="height:150px;line-height:150px;color:#ccc">无图</div>'}
+                </div>
+                <div class="food-item">
+                    <div class="food-text">🍲 晚餐: {row['晚餐']}</div>
+                    {f'<img src="{imgs["晚"]}">' if imgs["晚"] else '<div style="height:150px;line-height:150px;color:#ccc">无图</div>'}
+                </div>
+            </div>
+
+            <div class="review-box">
+                <strong>📝 今日回顾:</strong> {row['回顾']}
+            </div>
+        </div>
+        """
+        html_content += card_html
+
+    html_content += "</body></html>"
+    return html_content.encode("utf-8")
 
 # --- UI 渲染 ---
 st.title("🍎 个人健康看板 Pro")
 
 tab1, tab2 = st.tabs(["✍️ 详细登记", "📊 历史管理"])
 
+# ... (Tab 1 代码与之前保持完全一致，不需要修改) ...
 with tab1:
     curr_date = st.date_input("选择记录日期", value=datetime.now())
     date_str = str(curr_date)
@@ -143,7 +198,6 @@ with tab1:
 
         if st.form_submit_button("💾 暂存当前文字信息"):
             st.toast(f"文字信息已暂存 (日期: {date_str})", icon="ℹ️")
-            st.success("暂存完成！别忘了在下方同步照片或点击同步数据库。")
 
     st.divider()
     st.subheader("4. 照片管理")
@@ -173,14 +227,23 @@ with tab1:
             "加餐": snack_t, "晚餐": dinner_t, "晚后步行": walk_d,
             "精力": energy, "情绪": mood, "不适": discomfort, "回顾": review
         }
+        # 处理图片保存逻辑
+        df_temp = st.session_state.data
+        existing_record = df_temp[df_temp['日期'] == date_str].iloc[0] if not df_temp.empty and date_str in df_temp['日期'].values else None
+        
         for slot, img, tag in [("早餐图", img_b, "breakfast"), ("午餐图", img_l, "lunch"), 
-                              ("加餐图", img_s, "snack"), ("晚餐图", img_d, "dinner")]:
+                               ("加餐图", img_s, "snack"), ("晚餐图", img_d, "dinner")]:
             path = process_and_save(img, tag, date_str)
-            new_row[slot] = path if path else (record[slot] if record is not None else "na")
+            if path:
+                new_row[slot] = path
+            else:
+                # 保持原有的图片路径（如果有），否则设为 na
+                new_row[slot] = existing_record[slot] if existing_record is not None and slot in existing_record else "na"
 
         df = st.session_state.data
         if not df.empty and date_str in df['日期'].values:
-            df.loc[df['日期'] == date_str, new_row.keys()] = new_row.values()
+            for col in new_row.keys():
+                df.loc[df['日期'] == date_str, col] = new_row[col]
         else:
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
@@ -189,6 +252,7 @@ with tab1:
         st.balloons()
         st.success(f"🎉 同步已完成！{date_str} 的记录已存入历史管理。")
 
+# --- Tab 2: 历史管理 (修改了导出部分) ---
 with tab2:
     st.subheader("📜 历史数据全量管理")
     df_view = st.session_state.data
@@ -197,10 +261,22 @@ with tab2:
         
         # 导出区域
         st.write("### 📤 导出报告")
-        sel_dates = st.multiselect("勾选日期导出 Word：", options=df_view['日期'].tolist())
-        if sel_dates:
-            word_data = export_to_word(df_view[df_view['日期'].isin(sel_dates)])
-            st.download_button("📥 下载 Word 图文报告", data=word_data, file_name=f"健康报告_{datetime.now().strftime('%m%d')}.docx")
+        col_ex1, col_ex2 = st.columns([3, 1])
+        with col_ex1:
+            sel_dates = st.multiselect("勾选日期导出 HTML 报告：", options=df_view['日期'].tolist())
+        with col_ex2:
+            if sel_dates:
+                # 调用 HTML 生成函数
+                html_data = export_to_html(df_view[df_view['日期'].isin(sel_dates)])
+                st.download_button(
+                    "📥 下载网页报告 (.html)", 
+                    data=html_data, 
+                    file_name=f"健康报告_{datetime.now().strftime('%m%d')}.html",
+                    mime="text/html"
+                )
+            else:
+                st.info("请先在左侧选择日期")
+        st.caption("ℹ️ HTML 报告包含所有图片，双击即可浏览器打开，支持手机查看或打印为PDF。")
         st.divider()
 
         # 展示区域
@@ -224,9 +300,13 @@ with tab2:
                 meals = [("早餐", "早餐图", m1), ("午餐", "午餐图", m2), ("加餐", "加餐图", m3), ("晚餐", "晚餐图", m4)]
                 for label, key, col in meals:
                     with col:
-                        st.caption(f"{label}: {row[label]}")
-                        if str(row[key]) != "na" and os.path.exists(str(row[key])):
-                            st.image(str(row[key]), use_container_width=True)
+                        # 检查列是否存在且有值
+                        img_path = str(row[key]) if key in row else "na"
+                        food_text = str(row[label]) if label in row else ""
+                        
+                        st.caption(f"{label}: {food_text}")
+                        if img_path != "na" and os.path.exists(img_path):
+                            st.image(img_path, use_container_width=True)
                 
                 if st.button("🗑️ 删除此条", key=f"del_{row['日期']}"):
                     st.session_state.data = st.session_state.data[st.session_state.data['日期'] != row['日期']]
